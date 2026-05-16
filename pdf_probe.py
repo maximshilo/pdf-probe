@@ -1037,11 +1037,14 @@ def main() -> int:
         print(f"Not a file: {pdf_path}", file=sys.stderr)
         return 1
 
-    output_path = (
-        Path(args.output).expanduser().resolve()
-        if args.output
-        else pdf_path.with_suffix(".md")
-    )
+
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+    else:
+        if args.full:
+            output_path = pdf_path.with_suffix(".full.md")
+        else:
+            output_path = pdf_path.with_suffix(".md")
 
     try:
         report = build_report(pdf_path, output_path, args.password, args.full)
