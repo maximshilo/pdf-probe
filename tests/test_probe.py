@@ -1,7 +1,7 @@
 """Unit tests for pdf_probe module."""
 
 import pytest
-from pathlib import Path
+
 from pdf_probe import probe
 
 
@@ -109,7 +109,6 @@ class TestCountEntries:
     def test_count_entries_string(self):
         """Test counting string (non-list iterable)."""
         assert probe.count_entries("hello") == 5
-
 
 
 if __name__ == "__main__":
