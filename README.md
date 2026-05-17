@@ -42,25 +42,25 @@ If you want richer extraction in environments that support it, also install the 
 Basic usage:
 
 ```bash
-python3 pdf_probe.py input.pdf
+python3 -m pdf_probe input.pdf
 ```
 
 Write a full report:
 
 ```bash
-python3 pdf_probe.py input.pdf --full
+python3 -m pdf_probe input.pdf --full
 ```
 
 Choose a custom output path:
 
 ```bash
-python3 pdf_probe.py input.pdf -o report.md
+python3 -m pdf_probe input.pdf -o report.md
 ```
 
 Process an encrypted PDF:
 
 ```bash
-python3 pdf_probe.py protected.pdf --password secret
+python3 -m pdf_probe protected.pdf --password secret
 ```
 
 Command-line options:
