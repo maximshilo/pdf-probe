@@ -37,11 +37,13 @@ import json
 import shutil
 import subprocess
 import sys
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from pypdf import PdfReader
+
+UTC = timezone.utc
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def markdown_code_block(content: str, language: str = "") -> str:
+def markdown_code_block(content: str | None, language: str = "") -> str:
     if content is None:
         content = ""
     fence = "```"
@@ -188,7 +190,7 @@ def parse_pdfinfo_output(output: str) -> dict[str, str]:
 
 def build_bullet_section(
     title: str,
-    items: list[tuple[str, str | None]],
+    items: Sequence[tuple[str, str | None]],
     empty_message: str,
 ) -> list[str]:
     lines = [f"## {title}", ""]
@@ -259,9 +261,11 @@ def normalize_pdf_value(value: Any, depth: int = 0, seen: set[int] | None = None
         if reference is not None:
             return {
                 "reference": str(reference),
-                "value": normalize_pdf_value(dict(value), depth + 1, next_seen)
-                if hasattr(value, "keys")
-                else repr(value),
+                "value": (
+                    normalize_pdf_value(dict(value), depth + 1, next_seen)
+                    if hasattr(value, "keys")
+                    else repr(value)
+                ),
             }
 
     if hasattr(value, "get_object") and value.__class__.__name__ == "IndirectObject":
@@ -285,8 +289,7 @@ def normalize_pdf_value(value: Any, depth: int = 0, seen: set[int] | None = None
 
     if hasattr(value, "items"):
         return {
-            str(key): normalize_pdf_value(item, depth + 1, next_seen)
-            for key, item in value.items()
+            str(key): normalize_pdf_value(item, depth + 1, next_seen) for key, item in value.items()
         }
 
     if hasattr(value, "__iter__") and value.__class__.__name__ not in {"str", "bytes"}:
@@ -330,10 +333,14 @@ def build_text_content_markdown(page_texts: list[dict[str, Any]]) -> str:
     if not page_texts:
         return "_No text extracted from the PDF._"
     if all(item.get("page_number") is not None for item in page_texts):
-        return "\n\n".join(
-            f"### Page {item['page_number']}\n\n{(item.get('text') or '').strip() or '_No text extracted on this page._'}"
-            for item in page_texts
-        )
+        rendered_pages = []
+        for item in page_texts:
+            page_text = (item.get("text") or "").strip()
+            rendered_pages.append(
+                f"### Page {item['page_number']}\n\n"
+                f"{page_text or '_No text extracted on this page._'}"
+            )
+        return "\n\n".join(rendered_pages)
     text = "\n\n".join((item.get("text") or "").strip() for item in page_texts).strip()
     return text or "_No text extracted from the PDF._"
 
@@ -473,7 +480,11 @@ def collect_core_metadata(
     items: list[tuple[str, str]] = []
 
     def add(label: str, *candidates: Any, is_date: bool = False) -> None:
-        values = [format_pdf_date(candidate) for candidate in candidates] if is_date else list(candidates)
+        values = (
+            [format_pdf_date(candidate) for candidate in candidates]
+            if is_date
+            else list(candidates)
+        )
         value = pick_first_value(*values)
         if value:
             items.append((label, value))
@@ -614,10 +625,13 @@ def summarize_outline_titles(outline: list[dict[str, Any]], max_entries: int = 1
 
 
 def summarize_attachments(attachments: list[dict[str, Any]]) -> list[str]:
-    return [
-        f"{item['name']} ({item['file_count']} file{'s' if item['file_count'] != 1 else ''}, {item['total_bytes']} bytes)"
-        for item in attachments
-    ]
+    summaries: list[str] = []
+    for item in attachments:
+        plural = "s" if item["file_count"] != 1 else ""
+        summaries.append(
+            f"{item['name']} ({item['file_count']} file{plural}, " f"{item['total_bytes']} bytes)"
+        )
+    return summaries
 
 
 def extract_page_metadata(reader: PdfReader) -> list[dict[str, Any]]:
@@ -651,7 +665,10 @@ def extract_page_metadata(reader: PdfReader) -> list[dict[str, Any]]:
     return pages
 
 
-def extract_text_by_page(reader: PdfReader, pdf_path: Path) -> tuple[str, str, list[dict[str, Any]]]:
+def extract_text_by_page(
+    reader: PdfReader,
+    pdf_path: Path,
+) -> tuple[str, str, list[dict[str, Any]]]:
     page_texts: list[dict[str, Any]] = []
     extracted_chunks: list[str] = []
     source = "pypdf"
@@ -686,7 +703,9 @@ def extract_report_data(
     reader = PdfReader(str(pdf_path), strict=False)
     if reader.is_encrypted:
         if reader.decrypt(password) == 0:
-            raise ValueError("The PDF is encrypted and could not be decrypted with the provided password.")
+            raise ValueError(
+                "The PDF is encrypted and could not be decrypted with the " "provided password."
+            )
 
     stat = pdf_path.stat()
     text_source, extracted_text, text_pages = extract_text_by_page(reader, pdf_path)
@@ -695,7 +714,9 @@ def extract_report_data(
     xmp_metadata = extract_xmp_metadata(reader)
     outline = flatten_outline(reader.outline)
     pdfinfo = run_command(["pdfinfo", str(pdf_path)])
-    pdfinfo_fields = parse_pdfinfo_output(pdfinfo.get("stdout", "")) if pdfinfo.get("exit_code") == 0 else {}
+    pdfinfo_fields = (
+        parse_pdfinfo_output(pdfinfo.get("stdout", "")) if pdfinfo.get("exit_code") == 0 else {}
+    )
 
     report_data = {
         "pdf_path": pdf_path,
@@ -750,7 +771,9 @@ def build_slim_report(report_data: dict[str, Any]) -> str:
     text_stats = collect_text_stats(report_data["text_pages"], report_data["page_count"])
 
     pages_with_images = [
-        item["page_number"] for item in report_data["page_overview"] if item.get("image_count", 0) > 0
+        item["page_number"]
+        for item in report_data["page_overview"]
+        if item.get("image_count", 0) > 0
     ]
     pages_with_annotations = [
         item["page_number"]
@@ -759,11 +782,22 @@ def build_slim_report(report_data: dict[str, Any]) -> str:
     ]
     attachment_files = sum(item["file_count"] for item in report_data["attachment_summary"])
     bookmark_highlights = summarize_outline_titles(report_data["outline"])
+    pages_with_images_summary = (
+        f"`{len(pages_with_images)}/{report_data['page_count']}` "
+        f"({format_page_numbers(pages_with_images)})"
+    )
+    pages_with_annotations_summary = (
+        f"`{len(pages_with_annotations)}/{report_data['page_count']}` "
+        f"({format_page_numbers(pages_with_annotations)})"
+    )
 
     sections = [
         f"# PDF Report: {markdown_escape(pdf_path.name)}",
         "",
-        "This is the default slim report: a human-readable summary of the document and its metadata, followed by the full extracted text.",
+        (
+            "This is the default slim report: a human-readable summary of the "
+            "document and its metadata, followed by the full extracted text."
+        ),
         "",
     ]
     sections.extend(
@@ -832,15 +866,19 @@ def build_slim_report(report_data: dict[str, Any]) -> str:
                 ("Password supplied", humanize_scalar(report_data["password_used"])),
                 (
                     "Pages with extracted text",
-                    f"`{len(text_stats['pages_with_text'])}/{report_data['page_count']}`"
-                    if text_stats["coverage_known"]
-                    else "Unknown",
+                    (
+                        f"`{len(text_stats['pages_with_text'])}/{report_data['page_count']}`"
+                        if text_stats["coverage_known"]
+                        else "Unknown"
+                    ),
                 ),
                 (
                     "Pages without extracted text",
-                    format_page_numbers(text_stats["pages_without_text"])
-                    if text_stats["coverage_known"]
-                    else "Unknown",
+                    (
+                        format_page_numbers(text_stats["pages_without_text"])
+                        if text_stats["coverage_known"]
+                        else "Unknown"
+                    ),
                 ),
                 ("Total extracted characters", f"`{text_stats['total_characters']}`"),
             ],
@@ -855,14 +893,8 @@ def build_slim_report(report_data: dict[str, Any]) -> str:
                 ("Named destinations", f"`{report_data['named_destinations_count']}`"),
                 ("Embedded attachments", f"`{attachment_files}`"),
                 ("Form fields", f"`{len(report_data['form_field_names'])}`"),
-                (
-                    "Pages with images",
-                    f"`{len(pages_with_images)}/{report_data['page_count']}` ({format_page_numbers(pages_with_images)})",
-                ),
-                (
-                    "Pages with annotations",
-                    f"`{len(pages_with_annotations)}/{report_data['page_count']}` ({format_page_numbers(pages_with_annotations)})",
-                ),
+                ("Pages with images", pages_with_images_summary),
+                ("Pages with annotations", pages_with_annotations_summary),
             ],
             "No structure summary data was available.",
         )
@@ -911,10 +943,20 @@ def build_full_report(report_data: dict[str, Any]) -> str:
     pdf_path = report_data["pdf_path"]
     output_path = report_data["output_path"]
 
+    def json_block(value: Any) -> str:
+        return markdown_code_block(
+            json.dumps(value, ensure_ascii=False, indent=2),
+            "json",
+        )
+
     sections = [
         f"# PDF Full Extraction Report: {markdown_escape(pdf_path.name)}",
         "",
-        "This report contains everything this environment could extract directly from the PDF, including structured metadata, low-level PDF structure dumps, and text content.",
+        (
+            "This report contains everything this environment could extract "
+            "directly from the PDF, including structured metadata, low-level "
+            "PDF structure dumps, and text content."
+        ),
         "",
         "## Source File",
         "",
@@ -937,49 +979,59 @@ def build_full_report(report_data: dict[str, Any]) -> str:
         "",
         "## Document Information Dictionary",
         "",
-        markdown_code_block(json.dumps(report_data["metadata"], ensure_ascii=False, indent=2), "json"),
+        json_block(report_data["metadata"]),
         "",
         "## XMP Metadata",
         "",
-        markdown_code_block(json.dumps(report_data["xmp_metadata"], ensure_ascii=False, indent=2), "json")
-        if report_data["xmp_metadata"] is not None
-        else "No XMP metadata packet was found.",
+        (
+            json_block(report_data["xmp_metadata"])
+            if report_data["xmp_metadata"] is not None
+            else "No XMP metadata packet was found."
+        ),
         "",
         "## PDF Catalog",
         "",
-        markdown_code_block(json.dumps(report_data["catalog"], ensure_ascii=False, indent=2), "json"),
+        json_block(report_data["catalog"]),
         "",
         "## PDF Trailer",
         "",
-        markdown_code_block(json.dumps(report_data["trailer"], ensure_ascii=False, indent=2), "json"),
+        json_block(report_data["trailer"]),
         "",
         "## Bookmarks / Outline",
         "",
-        markdown_code_block(json.dumps(report_data["outline"], ensure_ascii=False, indent=2), "json")
-        if report_data["outline"]
-        else "No outline entries were found.",
+        (
+            json_block(report_data["outline"])
+            if report_data["outline"]
+            else "No outline entries were found."
+        ),
         "",
         "## Named Destinations",
         "",
-        markdown_code_block(json.dumps(report_data["named_destinations"], ensure_ascii=False, indent=2), "json")
-        if report_data["named_destinations"]
-        else "No named destinations were found.",
+        (
+            json_block(report_data["named_destinations"])
+            if report_data["named_destinations"]
+            else "No named destinations were found."
+        ),
         "",
         "## Embedded Attachments",
         "",
-        markdown_code_block(json.dumps(report_data["attachments"], ensure_ascii=False, indent=2), "json")
-        if report_data["attachments"]
-        else "No embedded attachments were found.",
+        (
+            json_block(report_data["attachments"])
+            if report_data["attachments"]
+            else "No embedded attachments were found."
+        ),
         "",
         "## Form Fields",
         "",
-        markdown_code_block(json.dumps(report_data["form_fields"], ensure_ascii=False, indent=2), "json")
-        if report_data["form_fields"] is not None
-        else "No AcroForm fields were found.",
+        (
+            json_block(report_data["form_fields"])
+            if report_data["form_fields"] is not None
+            else "No AcroForm fields were found."
+        ),
         "",
         "## Per-Page Metadata",
         "",
-        markdown_code_block(json.dumps(report_data["page_metadata"], ensure_ascii=False, indent=2), "json"),
+        json_block(report_data["page_metadata"]),
         "",
         "## Text Content",
         "",
@@ -987,7 +1039,7 @@ def build_full_report(report_data: dict[str, Any]) -> str:
         "",
         "## Text Content Snapshot",
         "",
-        markdown_code_block(json.dumps(report_data["text_pages"], ensure_ascii=False, indent=2), "json"),
+        json_block(report_data["text_pages"]),
         "",
         "## External Tool: pdfinfo",
         "",
