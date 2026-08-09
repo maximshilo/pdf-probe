@@ -1,115 +1,161 @@
-"""Integration tests: exercise individual pdf_probe extraction functions
-directly against real PDFs, without going through report rendering."""
+"""Integration tests: exercise the pipeline's stages directly against real PDFs,
+without going through the CLI or report rendering."""
+
+from __future__ import annotations
 
 import hashlib
 
 import pytest
-from pypdf import PdfReader
 
-from pdf_probe import probe
-from tests.conftest import ATTACHMENT_DATA, ATTACHMENT_NAME, BOOKMARK_TITLE, PAGE_TEXTS
+from pdf_probe.errors import PdfProbeError
+from pdf_probe.pipeline.pipeline import Pipeline
+from pdf_probe.pipeline.stages.metadata import MetadataStage
+from pdf_probe.pipeline.stages.outline import OutlineStage
+from pdf_probe.pipeline.stages.page_inspection import PageInspectionStage
+from pdf_probe.pipeline.stages.text_extraction import TextExtractionStage
+from tests.conftest import SamplePdfFactory
+from tests.framework import IntegrationTestCase
 
 
-class TestExtractReportDataSlim:
-    def test_core_fields(self, sample_pdf, tmp_path):
-        data = probe.extract_report_data(
-            sample_pdf, tmp_path / "sample.md", password="", include_full=False
+class TestPipelineSlim(IntegrationTestCase):
+    @pytest.fixture(autouse=True)
+    def _inject(self, sample_pdf):
+        self.sample_pdf = sample_pdf
+
+    def _run(self, *, password: str = "", full: bool = False):
+        context = self.make_context(self.sample_pdf, password=password, full=full)
+        data = self.make_data()
+        Pipeline.build(context).execute(data)
+        return data
+
+    def test_core_fields(self):
+        data = self._run()
+
+        self.assertEqual(data.page_count, 2)
+        self.assertFalse(data.is_encrypted)
+        self.assertEqual(data.text_source, "pypdf")
+        self.assertEqual(
+            data.file_info.sha256, hashlib.sha256(self.sample_pdf.read_bytes()).hexdigest()
+        )
+        self.assertEqual(data.metadata["/Title"], "E2E Sample PDF")
+        self.assertEqual(data.metadata["/Author"], "pdf-probe test suite")
+        self.assertIsNone(data.xmp_metadata)
+
+    def test_outline_and_attachments(self):
+        data = self._run()
+
+        self.assertEqual(len(data.outline), 1)
+        self.assertEqual(data.outline[0]["title"], SamplePdfFactory.BOOKMARK_TITLE)
+
+        self.assertEqual(
+            data.attachment_summary,
+            [
+                {
+                    "name": SamplePdfFactory.ATTACHMENT_NAME,
+                    "file_count": 1,
+                    "total_bytes": len(SamplePdfFactory.ATTACHMENT_DATA),
+                    "sizes": [len(SamplePdfFactory.ATTACHMENT_DATA)],
+                }
+            ],
+        )
+        self.assertEqual(data.form_field_names, [])
+
+    def test_full_only_fields_stay_empty(self):
+        data = self._run(full=False)
+
+        self.assertIsNone(data.attachments)
+        self.assertIsNone(data.form_fields)
+        self.assertIsNone(data.named_destinations)
+        self.assertIsNone(data.page_metadata)
+
+
+class TestPipelineFull(IntegrationTestCase):
+    @pytest.fixture(autouse=True)
+    def _inject(self, sample_pdf):
+        self.sample_pdf = sample_pdf
+
+    def test_full_only_fields_populated(self):
+        context = self.make_context(self.sample_pdf, full=True)
+        data = self.make_data()
+        Pipeline.build(context).execute(data)
+
+        self.assertEqual(
+            data.attachments[SamplePdfFactory.ATTACHMENT_NAME][0]["text"],
+            SamplePdfFactory.ATTACHMENT_DATA.decode(),
+        )
+        self.assertIsNone(data.form_fields)
+        self.assertEqual(len(data.page_metadata), 2)
+        self.assertEqual(data.page_metadata[0]["mediabox"], [0.0, 0.0, 200, 100])
+
+
+class TestPipelineEncrypted(IntegrationTestCase):
+    @pytest.fixture(autouse=True)
+    def _inject(self, encrypted_pdf):
+        self.encrypted_pdf = encrypted_pdf
+
+    def test_wrong_password_raises(self):
+        context = self.make_context(self.encrypted_pdf, password="wrong")
+        with self.assertRaises(PdfProbeError):
+            Pipeline.build(context).execute(self.make_data())
+
+    def test_correct_password_decrypts(self):
+        context = self.make_context(
+            self.encrypted_pdf, password=SamplePdfFactory.ENCRYPTED_PASSWORD
+        )
+        data = self.make_data()
+        Pipeline.build(context).execute(data)
+
+        self.assertTrue(data.is_encrypted)
+        self.assertTrue(data.password_used)
+        self.assertEqual(data.page_count, 2)
+
+
+class TestIndividualStages(IntegrationTestCase):
+    """Lower-level stages, run directly against a real `PdfReader`."""
+
+    @pytest.fixture(autouse=True)
+    def _inject(self, sample_pdf):
+        self.sample_pdf = sample_pdf
+
+    def _loaded_data(self):
+        data = self.make_data()
+        data.reader = self.load_reader(self.sample_pdf)
+        return data
+
+    def test_page_inspection_overview(self):
+        context = self.make_context(self.sample_pdf)
+        data = self._loaded_data()
+
+        PageInspectionStage(context).run(data)
+
+        self.assertEqual([page["page_number"] for page in data.page_overview], [1, 2])
+        self.assertTrue(all(page["image_count"] == 0 for page in data.page_overview))
+        self.assertTrue(all(page["annotation_count"] == 0 for page in data.page_overview))
+
+    def test_metadata_catalog_language_absent(self):
+        context = self.make_context(self.sample_pdf)
+        data = self._loaded_data()
+
+        MetadataStage(context).run(data)
+
+        self.assertIsNone(data.catalog_language)
+
+    def test_text_extraction_uses_pypdf_source(self):
+        context = self.make_context(self.sample_pdf)
+        data = self._loaded_data()
+
+        TextExtractionStage(context).run(data)
+
+        self.assertEqual(data.text_source, "pypdf")
+        self.assertEqual(
+            [item["text"].strip() for item in data.text_pages], SamplePdfFactory.PAGE_TEXTS
         )
 
-        assert data["page_count"] == 2
-        assert data["is_encrypted"] is False
-        assert data["text_source"] == "pypdf"
-        assert data["sha256"] == hashlib.sha256(sample_pdf.read_bytes()).hexdigest()
-        assert data["metadata"]["/Title"] == "E2E Sample PDF"
-        assert data["metadata"]["/Author"] == "pdf-probe test suite"
-        assert data["xmp_metadata"] is None
+    def test_flatten_outline_titles(self):
+        context = self.make_context(self.sample_pdf)
+        data = self._loaded_data()
 
-    def test_outline_and_attachments(self, sample_pdf, tmp_path):
-        data = probe.extract_report_data(
-            sample_pdf, tmp_path / "sample.md", password="", include_full=False
-        )
+        OutlineStage(context).run(data)
 
-        assert len(data["outline"]) == 1
-        assert data["outline"][0]["title"] == BOOKMARK_TITLE
-
-        assert data["attachment_summary"] == [
-            {
-                "name": ATTACHMENT_NAME,
-                "file_count": 1,
-                "total_bytes": len(ATTACHMENT_DATA),
-                "sizes": [len(ATTACHMENT_DATA)],
-            }
-        ]
-        assert data["form_field_names"] == []
-
-    def test_full_only_keys_absent(self, sample_pdf, tmp_path):
-        data = probe.extract_report_data(
-            sample_pdf, tmp_path / "sample.md", password="", include_full=False
-        )
-
-        for key in ("trailer", "catalog", "attachments", "form_fields", "page_metadata"):
-            assert key not in data
-
-
-class TestExtractReportDataFull:
-    def test_full_only_keys_present(self, sample_pdf, tmp_path):
-        data = probe.extract_report_data(
-            sample_pdf, tmp_path / "sample.full.md", password="", include_full=True
-        )
-
-        assert data["attachments"][ATTACHMENT_NAME][0]["text"] == ATTACHMENT_DATA.decode()
-        assert data["form_fields"] is None
-        assert data["catalog"]["value"]["/Type"] == "/Catalog"
-        assert len(data["page_metadata"]) == 2
-        assert data["page_metadata"][0]["mediabox"] == [0.0, 0.0, 200, 100]
-
-
-class TestExtractReportDataEncrypted:
-    def test_wrong_password_raises(self, encrypted_pdf, tmp_path):
-        with pytest.raises(ValueError):
-            probe.extract_report_data(
-                encrypted_pdf, tmp_path / "out.md", password="wrong", include_full=False
-            )
-
-    def test_correct_password_decrypts(self, encrypted_pdf, tmp_path):
-        data = probe.extract_report_data(
-            encrypted_pdf, tmp_path / "out.md", password="secret123", include_full=False
-        )
-
-        assert data["is_encrypted"] is True
-        assert data["password_used"] is True
-        assert data["page_count"] == 2
-
-
-class TestIndividualExtractors:
-    """Lower-level extractors, called directly against a real PdfReader."""
-
-    def test_extract_page_overview(self, sample_pdf):
-        reader = PdfReader(str(sample_pdf))
-        overview = probe.extract_page_overview(reader)
-
-        assert [page["page_number"] for page in overview] == [1, 2]
-        assert all(page["image_count"] == 0 for page in overview)
-        assert all(page["annotation_count"] == 0 for page in overview)
-
-    def test_extract_catalog_language_absent(self, sample_pdf):
-        reader = PdfReader(str(sample_pdf))
-        assert probe.extract_catalog_language(reader) is None
-
-    def test_extract_text_by_page_uses_pypdf_source(self, sample_pdf):
-        reader = PdfReader(str(sample_pdf))
-        source, _, page_texts = probe.extract_text_by_page(reader, sample_pdf)
-
-        assert source == "pypdf"
-        assert [item["text"].strip() for item in page_texts] == PAGE_TEXTS
-
-    def test_flatten_outline_titles(self, sample_pdf):
-        reader = PdfReader(str(sample_pdf))
-        entries = probe.flatten_outline(reader.outline)
-
-        assert entries[0]["title"] == BOOKMARK_TITLE
-        assert entries[0]["depth"] == 0
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        self.assertEqual(data.outline[0]["title"], SamplePdfFactory.BOOKMARK_TITLE)
+        self.assertEqual(data.outline[0]["depth"], 0)

@@ -4,6 +4,7 @@ __version__ = "0.1.0"
 __author__ = "Maxim Shilo"
 __email__ = "maximshilo.dev@gmail.com"
 
-from pdf_probe.probe import build_report, main
+from pdf_probe.application import Application, build_report, main
+from pdf_probe.config import Config
 
-__all__ = ["build_report", "main", "__version__"]
+__all__ = ["Application", "Config", "build_report", "main", "__version__"]

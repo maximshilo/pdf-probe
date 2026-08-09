@@ -47,8 +47,8 @@ Homepage = "https://github.com/maximshilo/pdf-probe"
 Repository = "https://github.com/maximshilo/pdf-probe"
 Issues = "https://github.com/maximshilo/pdf-probe/issues"
 
-[tool.setuptools]
-packages = ["pdf_probe"]
+[tool.setuptools.packages.find]
+include = ["pdf_probe*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
