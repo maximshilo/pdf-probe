@@ -103,6 +103,26 @@ The `--full` report adds:
 - If an encrypted PDF cannot be decrypted with the supplied password, the script exits with an error.
 - The script prints the generated Markdown file path to standard output on success.
 
+## Development
+
+Install the dev dependencies (ideally inside a virtualenv):
+
+```bash
+pip install -e ".[dev]"
+```
+
+Run the full check suite (tests + lint) with a single command:
+
+```bash
+nox
+```
+
+This runs pytest with coverage, then `black --check` and `ruff check`, each in its own isolated environment. To auto-fix formatting and lint issues instead:
+
+```bash
+nox -s format
+```
+
 ## License
 
 This project is licensed under the Apache License 2.0. See the `LICENSE` file for the full license text.
