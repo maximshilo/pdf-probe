@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-10
+
+### Fixed
+
+- `--full` no longer hangs on multi-page PDFs whose objects are shared across pages (e.g. fonts, resource dictionaries). `PdfValueFormatter.normalize` tracked visited objects per traversal path, so an object reached again via a sibling path (rather than back through its own ancestors) was re-expanded instead of short-circuited, causing traversal to blow up combinatorially once the prior depth-accounting fix let it reach that shared structure.
+
 ## [0.2.0] - 2026-08-10
 
 ### Added
