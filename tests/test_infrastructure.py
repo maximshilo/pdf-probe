@@ -4,6 +4,7 @@ ExternalTool, and Pipeline orchestration (against stub stages)."""
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from io import StringIO
 
@@ -95,6 +96,87 @@ class TestExternalTool(UnitTestCase):
         self.assertTrue(result.available)
         self.assertTrue(result.succeeded())
         self.assertIn("Python", result.stdout + result.stderr)
+
+    def test_password_args_uses_upw_flag_for_poppler_tools(self):
+        self.assertEqual(
+            ExternalTool("pdfinfo", Logger.get("test")).password_args("secret"),
+            ["-upw", "secret"],
+        )
+        self.assertEqual(
+            ExternalTool("pdftotext", Logger.get("test")).password_args("secret"),
+            ["-upw", "secret"],
+        )
+
+    def test_password_args_uses_password_flag_for_qpdf(self):
+        self.assertEqual(
+            ExternalTool("qpdf", Logger.get("test")).password_args("secret"),
+            ["--password=secret"],
+        )
+
+    def test_password_args_empty_when_no_password(self):
+        self.assertEqual(ExternalTool("qpdf", Logger.get("test")).password_args(""), [])
+
+    def test_run_times_out_and_reports_failure_instead_of_hanging(self):
+        tool = ExternalTool(sys.executable, Logger.get("test"))
+        tool._TIMEOUT_SECONDS = 0.5
+
+        start = time.monotonic()
+        result = tool.run("-c", "import time; time.sleep(5)")
+        elapsed = time.monotonic() - start
+
+        self.assertTrue(result.available)
+        self.assertFalse(result.succeeded())
+        self.assertIn("Timed out", result.stderr)
+        self.assertLess(elapsed, 4.0)
+
+    def test_redact_masks_upw_password(self):
+        command = ["pdfinfo", "-upw", "hunter2", "file.pdf"]
+        self.assertEqual(ExternalTool._redact(command), ["pdfinfo", "-upw", "***", "file.pdf"])
+
+    def test_redact_masks_qpdf_password_flag(self):
+        command = ["qpdf", "--password=hunter2", "--json", "file.pdf"]
+        self.assertEqual(
+            ExternalTool._redact(command), ["qpdf", "--password=***", "--json", "file.pdf"]
+        )
+
+    def test_redact_leaves_command_without_password_untouched(self):
+        command = ["pdfinfo", "file.pdf"]
+        self.assertEqual(ExternalTool._redact(command), command)
+
+    def _capture_logs(self) -> "_CapturingHandler":
+        Logger.configure(LogLevel.DEBUG)
+        self.addCleanup(Logger.configure, LogLevel.INFO)
+        handler = _CapturingHandler()
+        logger = logging.getLogger("pdf_probe")
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+        return handler
+
+    def test_timeout_logs_a_warning_without_leaking_the_command(self):
+        handler = self._capture_logs()
+        tool = ExternalTool(sys.executable, Logger.get("test"))
+        tool._TIMEOUT_SECONDS = 0.5
+
+        tool.run("-c", "import time; time.sleep(5)", "-upw", "hunter2")
+
+        warnings = [r for r in handler.records if r.levelno == logging.WARNING]
+        self.assertEqual(len(warnings), 1)
+        message = warnings[0].getMessage()
+        self.assertIn("timed out", message.lower())
+        self.assertNotIn("hunter2", message)
+
+    def test_running_line_is_logged_with_password_redacted(self):
+        handler = self._capture_logs()
+        tool = ExternalTool(sys.executable, Logger.get("test"))
+
+        tool.run("-upw", "hunter2", "--version")
+
+        running_lines = [
+            r.getMessage() for r in handler.records if r.getMessage().startswith("Running:")
+        ]
+        self.assertEqual(len(running_lines), 1)
+        self.assertNotIn("hunter2", running_lines[0])
+        self.assertIn("-upw ***", running_lines[0])
 
 
 class _RecordingStage(Stage):

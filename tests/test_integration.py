@@ -4,15 +4,18 @@ without going through the CLI or report rendering."""
 from __future__ import annotations
 
 import hashlib
+from unittest.mock import patch
 
 import pytest
 
 from pdf_probe.errors import PdfProbeError
 from pdf_probe.pipeline.pipeline import Pipeline
+from pdf_probe.pipeline.stages.external_tools import ExternalToolsStage
 from pdf_probe.pipeline.stages.metadata import MetadataStage
 from pdf_probe.pipeline.stages.outline import OutlineStage
 from pdf_probe.pipeline.stages.page_inspection import PageInspectionStage
 from pdf_probe.pipeline.stages.text_extraction import TextExtractionStage
+from pdf_probe.tools import ExternalTool, ToolResult
 from tests.conftest import SamplePdfFactory
 from tests.framework import IntegrationTestCase
 
@@ -159,3 +162,49 @@ class TestIndividualStages(IntegrationTestCase):
 
         self.assertEqual(data.outline[0]["title"], SamplePdfFactory.BOOKMARK_TITLE)
         self.assertEqual(data.outline[0]["depth"], 0)
+
+
+class TestExternalToolPasswordForwarding(IntegrationTestCase):
+    """Pins that a configured `--password` reaches every external-tool call.
+
+    Mocks `ExternalTool.run` rather than requiring real pdfinfo/pdftotext/qpdf
+    binaries, so these stay meaningful in environments (e.g. CI) where those
+    tools aren't installed - only the command-line args each stage builds
+    matter here, not what a real tool does with them.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _inject(self, sample_pdf):
+        self.sample_pdf = sample_pdf
+
+    @staticmethod
+    def _unavailable(*args, **kwargs) -> ToolResult:
+        return ToolResult(available=False, command=[])
+
+    def test_external_tools_stage_forwards_password(self):
+        context = self.make_context(self.sample_pdf, password="secret123", full=True)
+        data = self.make_data()
+
+        with patch.object(ExternalTool, "run", side_effect=self._unavailable) as mock_run:
+            ExternalToolsStage(context).run(data)
+
+        calls = [call.args for call in mock_run.call_args_list]
+        self.assertEqual(len(calls), 3)  # pdfinfo, pdfinfo -meta, qpdf --json
+        for pdfinfo_call in calls[:2]:
+            self.assertIn("-upw", pdfinfo_call)
+            self.assertEqual(pdfinfo_call[pdfinfo_call.index("-upw") + 1], "secret123")
+        self.assertIn("--password=secret123", calls[2])
+
+    def test_text_extraction_fallback_forwards_password_to_pdftotext(self):
+        context = self.make_context(self.sample_pdf, password="secret123")
+        data = self.make_data()
+        data.reader = self.load_reader(self.sample_pdf)
+        for page in data.reader.pages:
+            page.extract_text = lambda *args, **kwargs: ""
+
+        with patch.object(ExternalTool, "run", side_effect=self._unavailable) as mock_run:
+            TextExtractionStage(context).run(data)
+
+        args = mock_run.call_args.args
+        self.assertIn("-upw", args)
+        self.assertEqual(args[args.index("-upw") + 1], "secret123")

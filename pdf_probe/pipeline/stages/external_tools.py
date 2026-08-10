@@ -25,17 +25,19 @@ class ExternalToolsStage(Stage):
 
     def run(self, data: PipelineData) -> None:
         pdf_path = self._context.config.pdf_path
+        password = self._context.config.password
         pdfinfo = ExternalTool("pdfinfo", self._logger)
+        pdfinfo_pw = pdfinfo.password_args(password)
 
-        data.pdfinfo = pdfinfo.run(str(pdf_path))
+        data.pdfinfo = pdfinfo.run(*pdfinfo_pw, str(pdf_path))
         data.pdfinfo_fields = (
             self._parse_pdfinfo_output(data.pdfinfo.stdout) if data.pdfinfo.succeeded() else {}
         )
 
         if self._context.config.full:
-            data.pdfinfo_meta = pdfinfo.run("-meta", str(pdf_path))
+            data.pdfinfo_meta = pdfinfo.run("-meta", *pdfinfo_pw, str(pdf_path))
             qpdf = ExternalTool("qpdf", self._logger)
-            data.qpdf_json = qpdf.run("--json", str(pdf_path))
+            data.qpdf_json = qpdf.run("--json", *qpdf.password_args(password), str(pdf_path))
 
     @staticmethod
     def _parse_pdfinfo_output(output: str) -> Dict[str, str]:

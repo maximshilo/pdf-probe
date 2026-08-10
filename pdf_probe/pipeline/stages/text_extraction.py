@@ -36,7 +36,8 @@ class TextExtractionStage(Stage):
             return
 
         pdftotext = ExternalTool("pdftotext", self._logger)
-        result = pdftotext.run("-layout", str(pdf_path), "-")
+        password = self._context.config.password
+        result = pdftotext.run("-layout", *pdftotext.password_args(password), str(pdf_path), "-")
         if result.succeeded():
             pages = self._split_pdftotext_output(result.stdout)
             data.text_source = "pdftotext"
