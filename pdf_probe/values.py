@@ -146,7 +146,7 @@ class PdfValueFormatter:
 
         value_id = id(value)
         if value_id in seen:
-            return "<recursive-reference>"
+            return "<already-shown-elsewhere>"
 
         # Indirect references are unwrapped to show what they point to, not a
         # step deeper into the document, so unwrapping is depth-neutral -
@@ -173,25 +173,31 @@ class PdfValueFormatter:
                     "value": cls.normalize(value, depth, seen, _skip_wrap=True),
                 }
 
-        next_seen = set(seen)
-        next_seen.add(value_id)
+        # Marked in place (not copied) so that once an object has been fully
+        # expanded anywhere in the traversal, every other path that reaches
+        # it - not just a path back through its own ancestors - short-
+        # circuits instead of re-expanding it. PDFs share structure heavily
+        # (a font or resource dict is typically referenced by every page
+        # that uses it), and per-path tracking alone lets that sharing blow
+        # traversal up combinatorially across a large page tree.
+        seen.add(value_id)
 
         if hasattr(value, "keys"):
             return {
-                str(key): cls.normalize(item, depth + 1, next_seen) for key, item in value.items()
+                str(key): cls.normalize(item, depth + 1, seen) for key, item in value.items()
             }
 
         if isinstance(value, (list, tuple, set)):
-            return [cls.normalize(item, depth + 1, next_seen) for item in value]
+            return [cls.normalize(item, depth + 1, seen) for item in value]
 
         if hasattr(value, "items"):
             return {
-                str(key): cls.normalize(item, depth + 1, next_seen) for key, item in value.items()
+                str(key): cls.normalize(item, depth + 1, seen) for key, item in value.items()
             }
 
         if hasattr(value, "__iter__") and value.__class__.__name__ not in {"str", "bytes"}:
             try:
-                return [cls.normalize(item, depth + 1, next_seen) for item in value]
+                return [cls.normalize(item, depth + 1, seen) for item in value]
             except TypeError:
                 pass
 

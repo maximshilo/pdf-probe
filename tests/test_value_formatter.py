@@ -82,3 +82,28 @@ class TestGetMappingValue(UnitTestCase):
 
     def test_non_dict_returns_none(self):
         self.assertIsNone(PdfValueFormatter.get_mapping_value(None, "a"))
+
+
+class TestNormalize(UnitTestCase):
+    def test_self_referential_dict_is_short_circuited(self):
+        cyclic: dict = {"name": "root"}
+        cyclic["self"] = cyclic
+
+        result = PdfValueFormatter.normalize(cyclic)
+
+        self.assertEqual(result["self"], "<already-shown-elsewhere>")
+
+    def test_shared_object_reached_from_many_branches_is_not_reexpanded(self):
+        # Mirrors a PDF where many pages all reference the same resource
+        # (e.g. a font) rather than each holding their own copy. Dedup must
+        # be global, not per-path, or fan-out across branches that all
+        # reach the same object makes traversal blow up combinatorially.
+        shared = {"kind": "font"}
+        branches = [{"resources": shared, "index": i} for i in range(200)]
+        root = {"pages": branches}
+
+        result = PdfValueFormatter.normalize(root)
+
+        resources_seen = [branch["resources"] for branch in result["pages"]]
+        self.assertEqual(resources_seen[0], {"kind": "font"})
+        self.assertTrue(all(entry == "<already-shown-elsewhere>" for entry in resources_seen[1:]))
