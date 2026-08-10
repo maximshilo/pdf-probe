@@ -14,6 +14,12 @@ pip install -e ".[dev]"
 
 This pulls in `pytest`, `pytest-cov`, `black`, `ruff`, and `nox` on top of the runtime dependency (`pypdf`).
 
+Optionally, enable the repo's pre-commit hook to auto-format staged Python files with `black` before every commit:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Running checks
 
 Run the full check suite (tests with coverage, then formatting and lint) with a single command:

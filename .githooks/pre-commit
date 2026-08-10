@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Auto-formats staged Python files with black before each commit.
+# Enable with: git config core.hooksPath .githooks
+set -euo pipefail
+
+mapfile -d '' staged_py_files < <(git diff --cached --name-only --diff-filter=ACM -z -- '*.py')
+
+if [ "${#staged_py_files[@]}" -eq 0 ]; then
+    exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+black_bin="$repo_root/.venv/bin/black"
+if ! command -v "$black_bin" >/dev/null 2>&1; then
+    black_bin="black"
+fi
+
+if ! command -v "$black_bin" >/dev/null 2>&1; then
+    echo "pre-commit: black not found in .venv or on PATH - install dev deps (pip install -e '.[dev]') to enable auto-formatting." >&2
+    exit 0
+fi
+
+"$black_bin" -- "${staged_py_files[@]}"
+git add -- "${staged_py_files[@]}"
