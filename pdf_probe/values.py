@@ -125,47 +125,56 @@ class PdfValueFormatter:
         }
 
     @classmethod
-    def normalize(cls, value: Any, depth: int = 0, seen: Optional[set] = None) -> Any:
+    def normalize(
+        cls,
+        value: Any,
+        depth: int = 0,
+        seen: Optional[set] = None,
+        _skip_wrap: bool = False,
+    ) -> Any:
         """Recursively turn a pypdf object graph into plain JSON-able data."""
         if seen is None:
             seen = set()
-        if depth > 8:
-            return "<max-depth-reached>"
         if value is None or isinstance(value, (bool, int, float, str)):
             return value
         if isinstance(value, Path):
             return str(value)
         if isinstance(value, bytes):
             return cls.decode_bytes(value)
+        if depth > 12:
+            return "<max-depth-reached>"
 
         value_id = id(value)
         if value_id in seen:
             return "<recursive-reference>"
 
-        next_seen = set(seen)
-        next_seen.add(value_id)
+        # Indirect references are unwrapped to show what they point to, not a
+        # step deeper into the document, so unwrapping is depth-neutral -
+        # only actually descending into a container's children below counts
+        # against `depth`. Otherwise every reference (nearly every object in
+        # a real PDF) would burn budget for one real level of nesting.
+        # `_skip_wrap` stops the object we just resolved from being wrapped a
+        # second time for the same back-reference it was just unwrapped from.
+        if not _skip_wrap:
+            if value.__class__.__name__ == "IndirectObject":
+                try:
+                    resolved = value.get_object()
+                except Exception as exc:  # pragma: no cover - defensive path
+                    return {"reference": repr(value), "error": str(exc)}
+                return {
+                    "reference": repr(value),
+                    "value": cls.normalize(resolved, depth, seen, _skip_wrap=True),
+                }
 
-        if hasattr(value, "indirect_reference"):
             reference = getattr(value, "indirect_reference", None)
             if reference is not None:
                 return {
                     "reference": str(reference),
-                    "value": (
-                        cls.normalize(dict(value), depth + 1, next_seen)
-                        if hasattr(value, "keys")
-                        else repr(value)
-                    ),
+                    "value": cls.normalize(value, depth, seen, _skip_wrap=True),
                 }
 
-        if hasattr(value, "get_object") and value.__class__.__name__ == "IndirectObject":
-            try:
-                resolved = value.get_object()
-            except Exception as exc:  # pragma: no cover - defensive path
-                return {"reference": repr(value), "error": str(exc)}
-            return {
-                "reference": repr(value),
-                "value": cls.normalize(resolved, depth + 1, next_seen),
-            }
+        next_seen = set(seen)
+        next_seen.add(value_id)
 
         if hasattr(value, "keys"):
             return {
