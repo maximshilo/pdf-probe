@@ -183,17 +183,13 @@ class PdfValueFormatter:
         seen.add(value_id)
 
         if hasattr(value, "keys"):
-            return {
-                str(key): cls.normalize(item, depth + 1, seen) for key, item in value.items()
-            }
+            return {str(key): cls.normalize(item, depth + 1, seen) for key, item in value.items()}
 
         if isinstance(value, (list, tuple, set)):
             return [cls.normalize(item, depth + 1, seen) for item in value]
 
         if hasattr(value, "items"):
-            return {
-                str(key): cls.normalize(item, depth + 1, seen) for key, item in value.items()
-            }
+            return {str(key): cls.normalize(item, depth + 1, seen) for key, item in value.items()}
 
         if hasattr(value, "__iter__") and value.__class__.__name__ not in {"str", "bytes"}:
             try:
