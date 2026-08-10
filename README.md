@@ -104,44 +104,11 @@ The `--full` report adds:
 - If an encrypted PDF cannot be decrypted with the supplied password, the script exits with an error.
 - The script prints the generated Markdown file path to standard output on success.
 
-## Architecture
+## Documentation
 
-`pdf_probe` is built as an object-oriented pipeline rather than one large script:
-
-- **Pipeline & stages** (`pdf_probe/pipeline/`): a `Pipeline` runs an ordered list of `Stage` objects — `LoadDocumentStage`, `FileInspectionStage`, `TextExtractionStage`, `MetadataStage`, `OutlineStage`, `EmbeddedContentStage`, `PageInspectionStage`, `ExternalToolsStage`, and a terminal `SlimReportStage`/`FullReportStage` chosen by `--full`. Each stage reads and writes fields on a shared `PipelineData` object, and describes itself for progress reporting via two methods: `get_stage_name()`, a noun phrase (e.g. "File Inspection") used in `--verbose`'s "Running stage: ..." log lines, and `get_action_string()`, a present-tense phrase (e.g. "Inspecting file") shown in the progress bar.
-- **Progress reporting** (`pdf_probe/progress.py`): by default, a live progress bar redraws in place on stderr as each stage runs, with an animated `.`/`..`/`...` suffix on the current action, and disappears cleanly once the run finishes. Under `--verbose`, the bar is replaced by one DEBUG-level log line per stage instead (a redrawing bar would just collide with detailed log output). Both fall back to plain, non-animated lines when stderr isn't a terminal.
-- **Logging** (`pdf_probe/logging_.py`): a single `Logger` class (thin wrapper around `logging`), configured once from `--verbose`, used by every stage.
-- **Error handling** (`pdf_probe/errors.py`): a single `ErrorHandler` reports and formats failures uniformly, tagging each with the stage (or test) that raised it.
-- **Reporting & artifacts** (`pdf_probe/markdown.py`, `pdf_probe/artifacts.py`): `MarkdownReport` builds the output document section by section; `ArtifactManager` is the one place output is written to disk.
-- **Shared context** (`pdf_probe/context.py`): an `ExecutionContext` bundles the config, logger, error handler, and artifact manager that stages depend on, built once per run via `ExecutionContext.create()`.
-
-The test suite mirrors this: `tests/framework/` provides `UnitTestCase`, `IntegrationTestCase`, and `EndToEndTestCase` base classes (all wired to the same `Logger`/`ErrorHandler`), plus a `TestManager` that runs each category through pytest and logs the result — runnable directly as `python -m tests.framework.runner`.
-
-## Development
-
-Install the dev dependencies (ideally inside a virtualenv):
-
-```bash
-pip install -e ".[dev]"
-```
-
-Run the full check suite (tests + lint) with a single command:
-
-```bash
-nox
-```
-
-This runs pytest with coverage, then `black --check` and `ruff check`, each in its own isolated environment. To auto-fix formatting and lint issues instead:
-
-```bash
-nox -s format
-```
-
-To run just one category of tests (unit, integration, or end-to-end) through the shared test orchestrator:
-
-```bash
-python -m tests.framework.runner --category unit
-```
+- [CHANGELOG.md](CHANGELOG.md) — notable changes by release.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — development setup, tests, and lint/format checks.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how `pdf_probe` is put together internally.
 
 ## License
 

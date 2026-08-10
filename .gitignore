@@ -132,3 +132,5 @@ dmypy.json
 *.md
 !README.md
 !CONTRIBUTING.md
+!CHANGELOG.md
+!docs/**/*.md
